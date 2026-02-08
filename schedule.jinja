@@ -1,0 +1,47 @@
+{#
+  Schedule Templates
+  
+  A collection of Jinja macros for manipulating schedules in Home Assistant templates.
+  
+  Author: Bennett Wendorf
+  License: MIT
+#}
+
+{%- from "natural_language_dates_and_times.jinja" import get_weekday_index, macro_nearest_day_from_date_inclusive -%}
+
+{%- macro macro_flatten_schedule(schedule, returns) -%}
+  {%- set ns = namespace(result = []) -%}
+  {%- for day, slots in schedule.items() -%}
+    {%- for slot in slots -%}
+        {%- set ns.result = ns.result + [{'day': day, 'from': slot.from, 'to': slot.to}] -%}
+    {%- endfor -%}
+  {%- endfor -%}
+  {%- do returns(ns.result) -%}
+{%- endmacro -%}
+{%- set flatten_schedule = macro_flatten_schedule | as_function -%}
+
+{# This function will find the next event in the schedule, excluding the provided datetime #}
+{%- macro macro_get_next_schedule_event_exclusive(schedule, date_time, returns) -%}
+  {%- set flattened_schedule = flatten_schedule(schedule) -%}
+  {%- set date_time_weekday_index = date_time.isoweekday() -%}
+  {%- set date_time_time = date_time.time() -%}
+  {%- for event in flattened_schedule -%}
+    {%- if get_weekday_index(event.day) == date_time_weekday_index and event.from == date_time_time and loop.nextitem is defined -%}
+      {%- do returns(loop.nextitem) -%}
+      {%- break -%}
+    {%- elif get_weekday_index(event.day) > date_time_weekday_index or (get_weekday_index(event.day) == date_time_weekday_index and event.from > date_time_time) -%}
+      {%- do returns(event) -%}
+      {%- break -%}
+    {%- elif loop.nextitem is not defined -%}
+      {%- do returns(flattened_schedule[0]) -%}
+      {%- break -%}
+    {%- endif -%}
+  {%- endfor -%}
+{%- endmacro -%}
+{%- set get_next_schedule_event_exclusive = macro_get_next_schedule_event_exclusive | as_function -%}
+
+{%- macro macro_nearest_datetime_from_schedule_event(schedule_event, datetime) -%}
+  {%- set schedule_event_weekday_index = get_weekday_index(schedule_event.day) -%}
+  {%- set nearest_date = (macro_nearest_day_from_date_inclusive(schedule_event_weekday_index, datetime) | as_datetime).date() -%}
+  {{ nearest_date }} {{ schedule_event.from }}
+{%- endmacro -%}

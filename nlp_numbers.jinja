@@ -1,0 +1,30 @@
+{#
+  Natural Language Parsing Numbers Templates
+  
+  A collection of Jinja macros for parsing natural language numbers in Home Assistant templates.
+  
+  Author: Bennett Wendorf
+  License: MIT
+#}
+
+{# Convert a written number 1-99 (like twenty three) to an integer (like 23) #}
+{%- macro macro_convert_written_number_to_digits(written_number, returns) -%}
+  {% set words = (written_number|trim|lower|replace('-', ' ')).split(' ') %}
+
+  {% set word_to_value = {
+      'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
+      'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
+      'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13,
+      'fourteen': 14, 'fifteen': 15, 'sixteen': 16,
+      'seventeen': 17, 'eighteen': 18, 'nineteen': 19,
+      'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50,
+      'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90
+  } %}
+
+  {% set ns = namespace(result=0) %}
+  {% for w in words %}
+    {% set ns.result = ns.result + word_to_value.get(w, 0) %}
+  {% endfor %}
+  {% do returns(ns.result) %}
+{%- endmacro -%}
+{%- set convert_written_number_to_digits = macro_convert_written_number_to_digits | as_function -%}

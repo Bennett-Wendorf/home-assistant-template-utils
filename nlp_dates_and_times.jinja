@@ -1,0 +1,326 @@
+{#
+  Natural Language Parsing Dates and Times Templates
+  
+  A collection of Jinja macros for parsing natural language dates and times in Home Assistant templates.
+  
+  Author: Bennett Wendorf
+  License: MIT
+#}
+
+{%- from 'nlp_numbers.jinja' import convert_written_number_to_digits -%}
+
+{# Convert a written relative time (like 10 hours or twenty two minutes) to a timedelta object #}
+{%- macro macro_convert_relative_time_to_timedelta(raw_relative_time, returns) -%}
+  {%- set s = raw_relative_time | lower -%}
+  {%- set tokens = s.split() -%}
+
+  {%- set time_ns = namespace(hours = 0, minutes = 0, seconds = 0) -%}
+
+  {%- set iterator_ns = namespace(pending_number = none, pending_half_next = false, cur = 0) -%}
+
+  {%- for _ in range(tokens | length) -%}
+    {%- if iterator_ns.cur >= tokens | length -%}
+      {%- break -%}
+    {%- endif -%}
+
+    {%- set token = tokens[iterator_ns.cur] | trim -%}
+  
+
+    {%- if token == 'and' and iterator_ns.cur + 3 < tokens | length and tokens[iterator_ns.cur+1] == 'a' and tokens[iterator_ns.cur+2] == 'half' -%}
+      {%- set iterator_ns.pending_half_next = true -%}
+      {%- set iterator_ns.cur = iterator_ns.cur + 3 -%}
+      {%- continue -%}
+    {%- endif -%}
+
+    {%- if token in ['an', 'a'] -%}
+      {%- set iterator_ns.pending_number = 1 -%}
+      {%- set iterator_ns.cur = iterator_ns.cur + 1 -%}
+      {%- continue -%}
+    {%- elif token | regex_match('^\d+$') -%}
+      {%- set iterator_ns.pending_number = token | int -%}
+      {%- set iterator_ns.cur = iterator_ns.cur + 1 -%}
+      {%- continue -%}
+    {%- elif token in ['hour', 'hours', 'hr', 'hrs'] -%}
+      {%- set value = iterator_ns.pending_number if iterator_ns.pending_number is not none else 1 -%}
+      {%- set time_ns.hours = time_ns.hours + value -%}
+      {%- set iterator_ns.pending_number = none -%}
+      {%- if iterator_ns.pending_half_next -%}
+        {%- set time_ns.hours = time_ns.hours + 0.5 -%}
+        {%- set iterator_ns.pending_half_next = false -%}
+      {%- endif -%}
+
+      {%- if iterator_ns.cur + 3 < tokens | length 
+          and tokens[iterator_ns.cur+1] == 'and'
+          and tokens[iterator_ns.cur+2] == 'a'
+          and tokens[iterator_ns.cur+3] == 'half' -%}
+        {%- set time_ns.hours = time_ns.hours + 0.5 -%}
+        {%- set iterator_ns.cur = iterator_ns.cur + 3 -%}
+      {%- endif -%}
+      {%- set iterator_ns.cur = iterator_ns.cur + 1 -%}
+      {%- continue -%}
+    {%- elif token in ['minute', 'minutes', 'min', 'mins'] -%}
+      {%- set value = iterator_ns.pending_number if iterator_ns.pending_number is not none else 1 -%}
+      {%- set time_ns.minutes = time_ns.minutes + value -%}
+      {%- set iterator_ns.pending_number = none -%}
+      {%- if iterator_ns.pending_half_next -%}
+        {%- set time_ns.minutes = time_ns.minutes + 0.5 -%}
+        {%- set iterator_ns.pending_half_next = false -%}
+      {%- endif -%}
+      {%- if iterator_ns.cur + 3 < tokens | length
+          and tokens[iterator_ns.cur+1] == 'and'
+          and tokens[iterator_ns.cur+2] == 'a'
+          and tokens[iterator_ns.cur+3] == 'half' -%}
+        {%- set time_ns.minutes = time_ns.minutes + 0.5 -%}
+        {%- set iterator_ns.cur = iterator_ns.cur + 3 -%}
+      {%- endif -%}
+      {%- set iterator_ns.cur = iterator_ns.cur + 1 -%}
+      {%- continue -%}
+    {%- elif token in ['second', 'seconds', 'sec', 'secs'] -%}
+      {%- set value = iterator_ns.pending_number if iterator_ns.pending_number is not none else 1 -%}
+      {%- set time_ns.seconds = time_ns.seconds + value -%}
+      {%- set iterator_ns.pending_number = none -%}
+      {%- if iterator_ns.pending_half_next -%}
+        {%- set time_ns.seconds = time_ns.seconds + 0.5 -%}
+        {%- set iterator_ns.pending_half_next = false -%}
+      {%- endif -%}
+      {%- if iterator_ns.cur + 3 < tokens | length
+          and tokens[iterator_ns.cur+1] == 'and'
+          and tokens[iterator_ns.cur+2] == 'a'
+          and tokens[iterator_ns.cur+3] == 'half' -%}
+        {%- set time_ns.seconds = time_ns.seconds + 0.5 -%}
+        {%- set iterator_ns.cur = iterator_ns.cur + 3 -%}
+      {%- endif -%}
+      {%- set iterator_ns.cur = iterator_ns.cur + 1 -%}
+      {%- continue -%}
+    {%- else -%}
+      {%- set digits = convert_written_number_to_digits(token) -%}
+      {%- if digits is not none -%}
+        {%- set iterator_ns.pending_number = digits | int -%}
+        {%- set iterator_ns.cur = iterator_ns.cur + 1 -%}
+        {%- continue -%}
+      {%- endif -%}
+    {%- endif -%}
+
+    {%- set iterator_ns.cur = iterator_ns.cur + 1 -%}
+  {%- endfor -%}
+
+  {%- set td = timedelta(hours=time_ns.hours, minutes=time_ns.minutes, seconds=time_ns.seconds) -%}
+  {%- do returns(td) -%}
+{%- endmacro -%}
+{%- set convert_relative_time_to_timedelta = macro_convert_relative_time_to_timedelta | as_function -%}
+
+{# Convert a relative date string (like tomorrow or Monday) to a timedelta when given a base date (usually the current date) #}
+{%- macro macro_convert_relative_date_to_timedelta(raw_relative_date, base_date, returns) -%}
+  {%- set rd = raw_relative_date | lower | trim -%}
+
+  {%- set ns = namespace(delta_days = none) -%}
+
+  {%- if rd == 'today' -%}
+    {%- set ns.delta_days = 0 -%}
+  {%- elif rd == 'tomorrow' -%}
+    {%- set ns.delta_days = 1 -%}
+  {%- else -%}
+    {%- set weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] -%}
+    {%- if rd in weekdays -%}
+      {%- set target_weekday = weekdays.index(rd) -%}
+      {%- set base_weekday = base_date.weekday() -%}
+      {%- set days_ahead = (target_weekday - base_weekday) % 7 -%}
+      {%- set days_ahead = days_ahead if days_ahead != 0 else 7 -%}
+      {%- set ns.delta_days = days_ahead -%}
+    {%- else -%}
+      {%- set ns.delta_days = none -%}
+    {%- endif -%}
+  {%- endif -%}
+
+  {%- do returns(timedelta(days = ns.delta_days)) -%}
+{%- endmacro -%}
+{%- set convert_relative_date_to_timedelta = macro_convert_relative_date_to_timedelta | as_function -%}
+
+{# Convert any absolute month string (including shortened versions like jan) to an integer with 1 being January and 12 being December #}
+{%- macro macro_convert_absolute_month_to_int(raw_month, returns) -%}
+  {%- set month_map = {
+      'january': 1,  'jan': 1,
+      'february': 2, 'feb': 2,
+      'march': 3,    'mar': 3,
+      'april': 4,    'apr': 4,
+      'may': 5,
+      'june': 6,     'jun': 6,
+      'july': 7,     'jul': 7,
+      'august': 8,   'aug': 8,
+      'september': 9,'sep': 9,
+      'october': 10, 'oct':10,
+      'november': 11,'nov':11,
+      'december': 12,'dec':12
+  } -%}
+  {%- set month = raw_month | trim | lower -%}
+  {%- set result = month_map.get(month, -1) -%}
+  
+  {%- do returns(result) -%}
+{%- endmacro -%}
+{%- set convert_absolute_month_to_int = macro_convert_absolute_month_to_int | as_function -%}
+
+{# Convert an ordinal string (like 19th or nineteenth) to an integer #}
+{%- macro macro_convert_ordinal_string_to_int(raw_ordinal_string, returns) -%}
+  {%- set s = raw_ordinal_string | lower | trim -%}
+
+  {%- if s is match('^\\d+') -%}
+    {%- do returns(s | regex_replace('^([0-9]+).*', '\\1') | int) -%}
+
+  {%- else -%}
+    {%- set clean = s | replace('-', ' ') | trim -%}
+    {%- set words = clean.split(' ') -%}
+
+    {%- set word_to_num = {
+        'first':1,   'second':2,   'third':3,   'fourth':4,
+        'fifth':5,   'sixth':6,    'seventh':7, 'eighth':8,
+        'ninth':9,   'tenth':10,   'eleventh':11, 'twelfth':12,
+        'thirteenth':13, 'fourteenth':14, 'fifteenth':15,
+        'sixteenth':16, 'seventeenth':17, 'eighteenth':18, 'nineteenth':19,
+        'twentieth':20, 'thirtieth':30, 'twenty':20,  'thirty':30
+      } -%}
+
+    {%- set ns = namespace(total = 0) -%}
+    {%- for w in words -%}
+      {%- set val = word_to_num.get(w, 0) -%}
+      {%- set ns.total = ns.total + val -%}
+    {%- endfor -%}
+    {%- do returns(ns.total) -%}
+  {%- endif -%}
+{%- endmacro -%}
+{%- set convert_ordinal_string_to_int = macro_convert_ordinal_string_to_int | as_function -%}
+
+{# Convert an absolute date string (i.e. May 19th, June First, Jan 2nd, etc) to a datetime in the future (next year if the date already passed in the current year) #}
+{%- macro macro_convert_absolute_date_to_datetime(raw_absolute_date, returns) -%}
+    {%- set cleaned = raw_absolute_date | trim | replace('\s+', ' ') -%}
+
+    {%- set parts  = cleaned.split(' ') -%}
+    {%- set month_raw = parts[0] -%}
+    {%- set day_raw   = parts[1] if parts|length > 1 else '' -%}
+
+    {%- set month_int = convert_absolute_month_to_int(month_raw) -%}
+    {%- set day_int   = convert_ordinal_string_to_int(day_raw)   -%}
+
+    {%- set curr_year = utcnow().year -%}
+    {%- set candidate = utcnow().replace(
+      year=curr_year,
+      month=month_int,
+      day=day_int,
+      hour=0,
+      minute=0,
+      second=0,
+      microsecond=0
+      ) -%}
+
+    {%- if candidate < utcnow() -%}
+        {%- set candidate = candidate.replace(year=curr_year + 1) -%}
+    {%- endif -%}
+
+    {%- do returns(candidate) -%}
+{%- endmacro -%}
+{%- set convert_absolute_date_to_datetime = macro_convert_absolute_date_to_datetime | as_function -%}
+
+{# Convert an absolute time string (like 2:30 PM) to a datetime on the provided date #}
+{%- macro macro_convert_absolute_time_to_datetime_on_date(raw_absolute_time, base_date, returns) -%}
+  {%- set rt = raw_absolute_time | lower | replace('.', '') | trim -%}
+
+  {%- set am_pm = None -%}
+  {%- if rt.endswith('am') -%}
+    {%- set am_pm = 'am' -%}
+    {%- set rt = rt[0:rt|length-2] -%}
+  {%- elif rt.endswith('pm') -%}
+    {%- set am_pm = 'pm' -%}
+    {%- set rt = rt[0:rt|length-2] -%}
+  {%- endif -%}
+  {%- set rt = rt | trim -%}
+
+  {%- set tokens = [] -%}
+  {%- if ':' in rt -%}
+    {%- set parts = rt.split(':') -%}
+    {%- set tokens = parts | map('trim') | list -%}
+  {%- elif rt != '' -%}
+    {%- set tokens = rt.split() -%}
+  {%- endif -%}
+
+  {%- set hour = 0 -%}
+  {%- set minute = 0 -%}
+
+  {%- if tokens | length >= 1 -%}
+    {%- set hour_token = tokens[0] -%}
+    {%- if hour_token | is_number -%}
+      {%- set hour = hour_token | int -%}
+    {%- else -%}
+      {%- set hour = convert_written_number_to_digits(hour_token) | int -%}
+    {%- endif -%}
+    {%- if tokens | length >= 2 -%}
+      {%- set minute_token = tokens[1] -%}
+      {%- if minute_token | is_number -%}
+        {%- set minute = minute_token | int -%}
+      {%- else -%}
+        {%- set minute = convert_written_number_to_digits(minute_token) | int -%}
+      {%- endif -%}
+    {%- endif -%}
+  {%- endif -%}
+
+  {%- if am_pm -%}
+    {%- if am_pm == 'pm' and hour < 12 -%}
+      {%- set hour = hour + 12 -%}
+    {%- elif am_pm == 'am' and hour == 12 -%}
+      {%- set hour = 0 -%}
+    {%- endif -%}
+  {%- endif -%}
+
+  {%- set result = now()
+       .replace(
+         year=base_date.year,
+         month=base_date.month,
+         day=base_date.day,
+         hour=hour,
+         minute=minute,
+         second=0,
+         microsecond=0
+       ) -%}
+  {%- do returns(result) -%}
+{%- endmacro -%}
+{%- set convert_absolute_time_to_datetime_on_date = macro_convert_absolute_time_to_datetime_on_date | as_function -%}
+
+{# Convert a raw datetime string (i.e. in 10 minutes, May 19th at 7 AM, 2PM, tomorrow at 10AM, Next Thursday at 2PM) to a datetime in local time #}
+{% macro macro_convert_to_datetime(raw_datetime, returns) %}
+  {%- set current_datetime = now() -%}
+  {%- set output_format = '%Y-%m-%d %H:%M:%S' -%}
+
+  {%- set trimmed_datetime = raw_datetime | trim | lower -%}
+
+  {%- if trimmed_datetime == 'none' -%}
+    {%- do returns(current_datetime.strftime(output_format)) -%}
+  {%- elif trimmed_datetime.startswith('in ') -%}
+    {% set remaining = trimmed_datetime.split('in ')[1] %}
+    {%- do returns((current_datetime + convert_relative_time_to_timedelta(remaining)).strftime(output_format)) -%}
+  {%- elif 'at' in trimmed_datetime -%}
+    {%- set split_datetime = trimmed_datetime.split('at') -%}
+    {%- set date_part = split_datetime[0] | trim -%}
+    {%- set time_part = split_datetime[1] | trim -%}
+    {%- if 'today' in date_part
+        or 'tomorrow' in date_part
+        or 'monday' in date_part
+        or 'tuesday' in date_part
+        or 'wednesday' in date_part
+        or 'thursday' in date_part
+        or 'friday' in date_part
+        or 'saturday' in date_part
+        or 'sunday' in date_part -%}
+      {%- set relative_date = convert_relative_date_to_timedelta(date_part, current_datetime.date()) if date_part.split(' ') | length == 1 else convert_relative_date_to_timedelta(date_part.split(' ')[1], current_datetime.date()) -%}
+      {%- do returns(convert_absolute_time_to_datetime_on_date(time_part, current_datetime + relative_date).strftime(output_format)) -%}
+    {%- else -%}
+      {%- set date_part_datetime = convert_absolute_date_to_datetime(date_part) -%}
+      {%- do returns(convert_absolute_time_to_datetime_on_date(time_part, date_part_datetime).strftime(output_format)) -%}
+    {%- endif -%}
+  {%- else -%}
+    {%- set possible_datetime = convert_absolute_time_to_datetime_on_date(trimmed_datetime, current_datetime.date()) -%}
+    {%- if possible_datetime < current_datetime -%}
+      {%- do returns((possible_datetime + timedelta(days=1)).strftime(output_format)) -%}
+    {%- else -%}
+      {%- do returns(possible_datetime.strftime(output_format)) -%}
+    {%- endif -%}
+  {%- endif -%}
+{% endmacro %}
+{%- set convert_to_datetime = macro_convert_to_datetime | as_function -%}
