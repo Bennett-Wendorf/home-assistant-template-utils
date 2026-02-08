@@ -28,3 +28,33 @@
   {% do returns(ns.result) %}
 {%- endmacro -%}
 {%- set convert_written_number_to_digits = macro_convert_written_number_to_digits | as_function -%}
+
+{# Convert an ordinal string (like 19th or nineteenth) to an integer #}
+{%- macro macro_convert_ordinal_string_to_int(raw_ordinal_string, returns) -%}
+  {%- set s = raw_ordinal_string | lower | trim -%}
+
+  {%- if s is match('^\\d+') -%}
+    {%- do returns(s | regex_replace('^([0-9]+).*', '\\1') | int) -%}
+
+  {%- else -%}
+    {%- set clean = s | replace('-', ' ') | trim -%}
+    {%- set words = clean.split(' ') -%}
+
+    {%- set word_to_num = {
+        'first':1,   'second':2,   'third':3,   'fourth':4,
+        'fifth':5,   'sixth':6,    'seventh':7, 'eighth':8,
+        'ninth':9,   'tenth':10,   'eleventh':11, 'twelfth':12,
+        'thirteenth':13, 'fourteenth':14, 'fifteenth':15,
+        'sixteenth':16, 'seventeenth':17, 'eighteenth':18, 'nineteenth':19,
+        'twentieth':20, 'thirtieth':30, 'twenty':20,  'thirty':30
+      } -%}
+
+    {%- set ns = namespace(total = 0) -%}
+    {%- for w in words -%}
+      {%- set val = word_to_num.get(w, 0) -%}
+      {%- set ns.total = ns.total + val -%}
+    {%- endfor -%}
+    {%- do returns(ns.total) -%}
+  {%- endif -%}
+{%- endmacro -%}
+{%- set convert_ordinal_string_to_int = macro_convert_ordinal_string_to_int | as_function -%}
