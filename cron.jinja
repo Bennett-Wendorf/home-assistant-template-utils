@@ -1,0 +1,141 @@
+{#
+  Cron Templates
+  
+  A collection of Jinja macros for manipulating cron patterns in Home Assistant templates.
+  
+  Author: Bennett Wendorf
+  License: MIT
+#}
+
+{% from 'easy_time.jinja' import days_in_month %}
+
+{# Returns true or false depending on whether the given integer year is a leap year #}
+{%- macro macro_is_leap_year(year, returns) -%}
+  {%- do returns((year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)) -%}
+{%- endmacro -%}
+{%- set is_leap_year = macro_is_leap_year | as_function -%}
+
+{# Get the next value in a sorted int list that is greater than or equal to current #}
+{%- macro macro_next_value_ge(current, values, returns) -%}
+  {%- set sorted = values | sort -%}
+  {%- set ns = namespace(returned=false) -%}
+  {%- for v in sorted -%}
+    {%- if v >= current -%}
+      {% do returns(v) -%}
+      {%- set ns.returned = true -%}
+      {%- break -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {% if not ns.returned -%}
+    {%- do returns(None) -%}
+  {%- endif -%}
+{%- endmacro -%}
+{%- set next_value_ge = macro_next_value_ge | as_function -%}
+
+{# Given a cron pattern and bounding values, return a list of every possible value for that field #}
+{%- macro macro_cron_field_to_set(field, min_value, max_value, returns) -%}
+  {%- set ns = namespace(result=[]) -%}   
+  {%- for part in field.split(',') -%}
+    {%- if part == '*' -%}
+      {%- set ns.result = range(min_value, max_value + 1) | list -%}
+    {%- elif part.find('/') != -1 -%}
+      {%- set base, step_str = part.split('/') -%}
+      {%- set step = step_str | int -%}
+      {%- if base == '*' -%}
+        {%- set lo = min_value -%}
+        {%- set hi = max_value -%}
+      {%- elif base.find('-') != -1 -%}
+        {%- set lo, hi = base.split('-') | map('int') -%}
+      {%- else -%}
+        {%- set lo = base | int -%}
+        {%- set hi = lo -%}
+      {%- endif -%}
+      {%- set seq = range(lo, hi + 1, step) | list -%}
+      {%- set ns.result = ns.result + seq -%}
+    {%- else -%}
+      {%- if part.find('-') != -1 -%}
+        {%- set lo, hi = part.split('-') | map('int') -%}
+        {%- set seq = range(lo, hi + 1) | list -%}
+        {%- set ns.result = ns.result + seq -%}
+      {%- else -%}
+        {%- set ns.result = ns.result + [ part | int ] -%}
+      {%- endif -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- do returns(ns.result | unique | list) -%}
+{%- endmacro -%}
+{%- set cron_field_to_set = macro_cron_field_to_set | as_function -%}
+
+{# Given a calculation datetime (usually now()) and a cron pattern, return the next viable datetime for that pattern. (Looks up to ~10 years ahead) #}
+{%- macro macro_get_next_datetime_from_cron(calculate_from_datetime, cron_pattern, returns) -%}
+  {%- set parts = cron_pattern.split(' ') -%}
+  {%- set minute_pat = parts[0] -%}
+  {%- set hour_pat = parts[1] -%}
+  {%- set dom_pat = parts[2] -%}
+  {%- set month_pat = parts[3] -%}
+  {%- set dow_pat = parts[4] -%}
+  {%- set minute_set = cron_field_to_set(minute_pat, 0, 59) -%}
+  {%- set hour_set = cron_field_to_set(hour_pat, 0, 23) -%}
+  {%- set dom_set = cron_field_to_set(dom_pat, 1, 31) -%}
+  {%- set month_set = cron_field_to_set(month_pat, 1, 12) -%}
+  {%- set tmp_dow_set = cron_field_to_set(dow_pat, 0, 7) -%}
+  {# Allow 0 or 7 to mean Sunday #}
+  {%- set dow_set = tmp_dow_set + [7] if 0 in tmp_dow_set and 7 not in tmp_dow_set else [0] + tmp_dow_set if 7 in tmp_dow_set and 0 not in tmp_dow_set else tmp_dow_set -%}
+  {%- set start_dt = (calculate_from_datetime + timedelta(minutes=1)).replace(second=0) -%}
+  {%- set candidate_ns = namespace(candidate=start_dt) -%}
+  {%- set returned_ns = namespace(returned=False) -%}
+  {%- for iter in range(0, 10) -%}
+    {%- if (candidate_ns.candidate.month in month_set) and (candidate_ns.candidate.day in dom_set) and (candidate_ns.candidate.isoweekday() in dow_set) and (candidate_ns.candidate.hour in hour_set) and (candidate_ns.candidate.minute in minute_set) -%}
+      {%- do returns(candidate_ns.candidate) -%}
+      {% set returned_ns.returned = True -%}
+    {%- else -%}
+      {%- set next_min = next_value_ge(candidate_ns.candidate.minute, minute_set) -%}
+      {%- if next_min is not none -%}
+        {%- set candidate_ns.candidate = candidate_ns.candidate.replace(minute=next_min, second=0) -%}
+      {%- else -%}
+        {%- set candidate_ns.candidate = candidate_ns.candidate + timedelta(hours=1) -%}
+        {%- set candidate_ns.candidate = candidate_ns.candidate.replace(minute=minute_set | first, second=0) -%}
+      {%- endif -%}
+      
+      {%- set next_hour = next_value_ge(candidate_ns.candidate.hour, hour_set) -%}
+      {%- if next_hour is not none -%}
+        {%- set candidate_ns.candidate = candidate_ns.candidate.replace(hour=next_hour) -%}
+      {%- else -%}
+        {%- set candidate_ns.candidate = candidate_ns.candidate + timedelta(days=1) -%}
+        {%- set candidate_ns.candidate = candidate_ns.candidate.replace(hour=hour_set | first) -%}
+      {%- endif -%}
+
+      {%- set next_day_ns = namespace(next_day=none) -%}
+      {%- set tmp_dim = days_in_month(candidate_ns.candidate.month) | int -%}
+      {%- set dim = tmp_dim + 1 if candidate_ns.candidate.month == 2 and is_leap_year(candidate_ns.candidate.year) else tmp_dim -%}
+      {%- for d in range(candidate_ns.candidate.day, dim+1) -%}
+        {%- set dt_candidate = candidate_ns.candidate.replace(day=d) -%}
+        {%- set dom_ok = (dt_candidate.day in dom_set) -%}
+        {%- set dow_ok = (dt_candidate.isoweekday()) in dow_set -%}
+        {%- if dom_ok and dow_ok -%}
+          {%- set next_day_ns.next_day = d -%}
+          {%- break -%}
+        {%- endif -%}
+      {%- endfor -%}
+  
+      {%- if next_day_ns.next_day is not none and candidate_ns.candidate.month in month_set -%}
+        {%- set candidate_ns.candidate = candidate_ns.candidate.replace(day=next_day_ns.next_day) -%}
+      {%- else -%}
+        {%- set candidate_ns.candidate = candidate_ns.candidate + timedelta(days=31) -%}
+        {%- set next_month = next_value_ge(candidate_ns.candidate.month, month_set) -%}
+        {%- if next_month is not none -%}
+          {%- set candidate_ns.candidate = candidate_ns.candidate.replace(month=next_month, day=1) -%}
+        {%- else -%}
+          {%- set candidate_ns.candidate = candidate_ns.candidate.replace(year=candidate_ns.candidate.year + 1, month=month_set | first, day=1) -%}
+        {%- endif -%}
+      {%- endif -%}
+    {%- endif -%}
+    {%- if returned_ns.returned -%}
+      {%- break -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- if not returned_ns.returned -%}
+    {%- do returns(none) -%}
+  {%- endif -%}
+{%- endmacro -%}
+{%- set get_next_datetime_from_cron = macro_get_next_datetime_from_cron | as_function -%}

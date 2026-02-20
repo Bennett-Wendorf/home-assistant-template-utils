@@ -41,6 +41,13 @@ Utilities for working with schedules in Home Assistant templates.
 **Features:**
 - Get the next scheduled time for a given schedule
 
+### Cron (`cron.jinja`)
+
+Utilities for working with cron patterns in Home Assistant templates
+
+**Features:**
+- Get the next time matching a cron pattern
+
 ## Installation
 
 1. **Create the custom_templates directory** (if it doesn't exist):
